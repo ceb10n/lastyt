@@ -1,4 +1,5 @@
 import base64
+import datetime
 import json
 import os
 import time
@@ -9,6 +10,7 @@ from ytmusicapi import YTMusic
 
 STATE_FILE = Path("state.json")
 MAX_STATE_SIZE = 5000
+WIDTH = 56
 
 
 def load_state() -> set[str]:
@@ -27,7 +29,7 @@ def save_state(ids: set[str]) -> None:
 def build_ytmusic() -> YTMusic:
     if "YTM_HEADERS" in os.environ:
         headers_path = Path("/tmp/ytm_headers.json")
-        headers_path.write_text(base64.b64decode(os.environ["YTM_HEADERS"]).decode())
+        headers_path.write_text(base64.b64decode(os.environ["YTM_HEADERS"].strip()).decode())
         return YTMusic(str(headers_path))
     if Path("browser.json").exists():
         return YTMusic("browser.json")
@@ -43,7 +45,19 @@ def build_lastfm() -> pylast.LastFMNetwork:
     )
 
 
+def fmt_ts(timestamp: int) -> str:
+    return datetime.datetime.fromtimestamp(timestamp).strftime("%d %b %Y %H:%M")
+
+
 def sync() -> None:
+    started_at = time.time()
+
+    print("─" * WIDTH)
+    print(f"  lastyt  |  YouTube Music → Last.fm")
+    print(f"  {datetime.datetime.now().strftime('%d %b %Y %H:%M')}")
+    print("─" * WIDTH)
+
+    print("\n  Fetching history...")
     scrobbled = load_state()
     ytmusic = build_ytmusic()
     network = build_lastfm()
@@ -55,21 +69,36 @@ def sync() -> None:
     ]
 
     if not new_tracks:
-        print("No new tracks to scrobble.")
+        print("  No new tracks to scrobble.\n")
+        print("─" * WIDTH)
         return
 
+    count = len(new_tracks)
+    print(f"  Found {count} new track(s):\n")
+
     now = int(time.time())
-    # Reverse so oldest track gets the earliest timestamp
+    oldest_ts = now - (count - 1) * 30
+
     for i, track in enumerate(reversed(new_tracks)):
         artist = track["artists"][0]["name"] if track.get("artists") else "Unknown"
         title = track["title"]
-        timestamp = now - (len(new_tracks) - 1 - i) * 30
+        timestamp = oldest_ts + i * 30
+        label = f"{i + 1:>{len(str(count))}}. {artist} — {title}"
+        time_label = datetime.datetime.fromtimestamp(timestamp).strftime("%H:%M")
+        print(f"  {label[:WIDTH - 10]}  {time_label}")
         network.scrobble(artist=artist, title=title, timestamp=timestamp)
         scrobbled.add(track["videoId"])
-        print(f"  {artist} — {title}")
 
     save_state(scrobbled)
-    print(f"\nScrobbled {len(new_tracks)} track(s).")
+    elapsed = time.time() - started_at
+
+    print()
+    print("─" * WIDTH)
+    print(f"  Scrobbled  {count} track(s)")
+    print(f"  From       {fmt_ts(oldest_ts)}")
+    print(f"  To         {fmt_ts(now)}")
+    print(f"  Completed  {elapsed:.1f}s")
+    print("─" * WIDTH)
 
 
 if __name__ == "__main__":

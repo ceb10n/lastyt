@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 * * * *'  # every hour
   workflow_dispatch:      # allow manual trigger from the Actions tab
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
 
 jobs:
   sync:
@@ -16,15 +21,6 @@ jobs:
         with:
           python-version-file: .python-version
 
-      # Persist state.json between runs so we don't re-scrobble old tracks.
-      # A new cache entry is saved each run; the most recent one is restored.
-      - name: Restore sync state
-        uses: actions/cache@v4
-        with:
-          path: state.json
-          key: lastyt-state-${{ github.run_id }}
-          restore-keys: lastyt-state-
-
       - name: Install dependencies
         run: pip install ytmusicapi pylast
 
@@ -36,3 +32,10 @@ jobs:
           LASTFM_USERNAME: ${{ secrets.LASTFM_USERNAME }}
           LASTFM_PASSWORD: ${{ secrets.LASTFM_PASSWORD }}
         run: python main.py
+
+      - name: Save state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "chore: update sync state [skip ci]" && git push
