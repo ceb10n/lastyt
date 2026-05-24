@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Runtime state (managed by GitHub Actions cache)
+state.json
+
+# Local ytmusicapi auth files — never commit these
+browser.json
+headers_auth.json
+oauth.json
