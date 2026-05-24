@@ -26,7 +26,7 @@ jobs:
           restore-keys: lastyt-state-
 
       - name: Install dependencies
-        run: pip install .
+        run: pip install ytmusicapi pylast
 
       - name: Run sync
         env:
