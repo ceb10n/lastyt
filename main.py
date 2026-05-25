@@ -91,13 +91,15 @@ def sync() -> None:
     for i, track in enumerate(reversed(new_tracks)):
         artist = track["artists"][0]["name"] if track.get("artists") else "Unknown"
         title = track["title"]
+        album = track.get("album", {}).get("name") if track.get("album") else None
+        duration = track.get("duration_seconds")
         timestamp = oldest_ts + i * 30
         label = f"{i + 1:>{len(str(count))}}. {artist} — {title}"
         time_label = datetime.datetime.fromtimestamp(timestamp).strftime("%H:%M")
         print(f"  🎧 {label[:WIDTH - 10]}  {time_label}")
-        network.scrobble(artist=artist, title=title, timestamp=timestamp)
+        network.scrobble(artist=artist, title=title, timestamp=timestamp, album=album, duration=duration)
         scrobbled.add(track["videoId"])
-        rows.append(f"| {i + 1} | {artist} | {title} | {time_label} |")
+        rows.append(f"| {i + 1} | {artist} | {title} | {album or '—'} | {time_label} |")
 
     save_state(scrobbled)
     elapsed = time.time() - started_at
@@ -115,8 +117,8 @@ def sync() -> None:
         "",
         f"✅ **{fmt_ts(now)}** &nbsp;·&nbsp; 🎶 {count} track(s) scrobbled &nbsp;·&nbsp; ⚡ {elapsed:.1f}s",
         "",
-        f"| # | 🎤 Artist | 🎵 Track | 🕐 ~Time |",
-        f"|---|--------|-------|-------|",
+        f"| # | 🎤 Artist | 🎵 Track | 💿 Album | 🕐 ~Time |",
+        f"|---|--------|-------|-------|-------|",
         *rows,
         "",
         "> ⚠️ Timestamps are approximate.",
