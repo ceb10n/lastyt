@@ -188,18 +188,25 @@ def sync() -> None:
 
     base_seen: dict[str, int] = {}
     new_tracks: list[tuple[str, dict]] = []
+    print()
     for t in history:
+        artist = t["artists"][0]["name"] if t.get("artists") else "?"
+        title = t.get("title", "?")
+        played = t.get("played", "?")
         b = _track_base_key(t)
         if b is None:
-            artist = t["artists"][0]["name"] if t.get("artists") else "?"
-            print(f"  ⚠️  No ID: {artist} — {t.get('title', '?')}")
+            print(f"  ⚠️  [{played}] {artist} — {title}  (no ID)")
             continue
         n = base_seen.get(b, 0)
         base_seen[b] = n + 1
         # newest appearance → highest count; oldest appearance → 0
         key = f"{b}|{base_totals[b] - 1 - n}"
-        if key not in scrobbled:
+        if key in scrobbled:
+            print(f"  ⏭   [{played}] {artist} — {title}  (key: {key})")
+        else:
+            print(f"  🆕  [{played}] {artist} — {title}  (key: {key})")
             new_tracks.append((key, t))
+    print()
 
     if not new_tracks:
         print("  ✅ No new tracks to scrobble.\n")
