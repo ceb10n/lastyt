@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pylast
 from ytmusicapi import YTMusic
+from ytmusicapi.continuations import get_continuations
+from ytmusicapi.navigation import MUSIC_SHELF, SECTION_LIST, SINGLE_COLUMN_TAB, TITLE_TEXT, nav
+from ytmusicapi.parsers.playlists import parse_playlist_items
 
 STATE_FILE = Path("state.json")
 MAX_STATE_SIZE = 5000
@@ -24,6 +27,55 @@ def save_state(ids: set[str]) -> None:
     if len(entries) > MAX_STATE_SIZE:
         entries = entries[-MAX_STATE_SIZE:]
     STATE_FILE.write_text(json.dumps(entries))
+
+
+def get_full_history(ytmusic: YTMusic, limit: int = 500) -> list:
+    """Fetch history including paginated continuations, up to `limit` tracks."""
+    endpoint = "browse"
+    body = {"browseId": "FEmusic_history"}
+    response = ytmusic._send_request(endpoint, body)
+    section_list = nav(response, [*SINGLE_COLUMN_TAB, "sectionListRenderer"])
+    sections = section_list.get("contents", [])
+    songs: list = []
+
+    def parse_section(content: dict) -> list:
+        data = nav(content, [*MUSIC_SHELF, "contents"], True)
+        if not data:
+            return []
+        played_label = nav(content["musicShelfRenderer"], TITLE_TEXT)
+        items = parse_playlist_items(data)
+        for s in items:
+            s["played"] = played_label
+        # follow per-section continuation (more tracks in the same time period)
+        music_shelf = content.get("musicShelfRenderer", {})
+        if "continuations" in music_shelf:
+            request_func = lambda params: ytmusic._send_request(endpoint, body, params)
+            extras = get_continuations(music_shelf, "musicShelfContinuation", None, request_func, parse_playlist_items)
+            for s in extras:
+                s["played"] = played_label
+            items.extend(extras)
+        return items
+
+    for content in sections:
+        songs.extend(parse_section(content))
+        if len(songs) >= limit:
+            return songs[:limit]
+
+    # follow section-list continuation (older time periods: "This week", "Last month", etc.)
+    if "continuations" in section_list:
+        def parse_section_list(items: list) -> list:
+            result = []
+            for content in items:
+                result.extend(parse_section(content))
+            return result
+
+        request_func = lambda params: ytmusic._send_request(endpoint, body, params)
+        more = get_continuations(
+            section_list, "sectionListContinuation", limit - len(songs), request_func, parse_section_list
+        )
+        songs.extend(more)
+
+    return songs[:limit]
 
 
 def build_ytmusic() -> YTMusic:
@@ -69,7 +121,8 @@ def sync() -> None:
     ytmusic = build_ytmusic()
     network = build_lastfm()
 
-    history = ytmusic.get_history()
+    history = get_full_history(ytmusic)
+    print(f"  📋 API returned {len(history)} track(s) total")
     new_tracks = [
         t for t in history
         if t.get("videoId") and t["videoId"] not in scrobbled
@@ -126,4 +179,8 @@ def sync() -> None:
 
 
 if __name__ == "__main__":
-    sync()
+    try:
+        sync()
+    except Exception as exc:
+        print(f"\n  ❌ Sync failed: {exc}")
+        raise
