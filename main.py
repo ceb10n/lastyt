@@ -1,5 +1,6 @@
 import base64
 import datetime
+import hashlib
 import json
 import os
 import time
@@ -14,19 +15,71 @@ from ytmusicapi.parsers.playlists import parse_playlist_items
 STATE_FILE = Path("state.json")
 MAX_STATE_SIZE = 5000
 WIDTH = 56
+DEDUP_DAYS = 7  # a song can be re-scrobbled after this many days
+
+
+def _played_date(played_label: str) -> str:
+    """Convert a YTM 'played' section label to a stable date key."""
+    today = datetime.date.today()
+    lower = played_label.lower().strip()
+    if lower in ("hoje", "today"):
+        return today.isoformat()
+    if lower in ("ontem", "yesterday"):
+        return (today - datetime.timedelta(days=1)).isoformat()
+    iso = today.isocalendar()
+    return f"W{iso.year}-{iso.week:02d}"
+
+
+def _track_base_key(t: dict) -> str | None:
+    """Return base dedup key (videoId or artist+title hash, plus played date), without occurrence count."""
+    date_part = _played_date(t.get("played", "today"))
+    if vid := t.get("videoId"):
+        return f"{vid}|{date_part}"
+    artist = t["artists"][0]["name"] if t.get("artists") else None
+    title = t.get("title")
+    if artist and title:
+        h = hashlib.md5(f"{artist}\x00{title}".encode()).hexdigest()[:12]
+        return f"title:{h}|{date_part}"
+    return None
 
 
 def load_state() -> set[str]:
-    if STATE_FILE.exists():
-        return set(json.loads(STATE_FILE.read_text()))
-    return set()
+    if not STATE_FILE.exists():
+        return set()
+    data = json.loads(STATE_FILE.read_text())
+    if not data:
+        return set()
+    pipes = data[0].count("|")
+    today = datetime.date.today()
+    if pipes == 0:
+        # Migrate from very old format (plain videoIds) → vid|date|0
+        migrated: set[str] = set()
+        for vid in data:
+            for days_ago in range(DEDUP_DAYS + 1):
+                d = (today - datetime.timedelta(days=days_ago)).isoformat()
+                migrated.add(f"{vid}|{d}|0")
+        return migrated
+    if pipes == 1:
+        # Migrate from previous format (vid|date) → vid|date|0
+        return {k + "|0" for k in data}
+    return set(data)
 
 
-def save_state(ids: set[str]) -> None:
-    entries = list(ids)
-    if len(entries) > MAX_STATE_SIZE:
-        entries = entries[-MAX_STATE_SIZE:]
-    STATE_FILE.write_text(json.dumps(entries))
+def save_state(keys: set[str]) -> None:
+    cutoff = (datetime.date.today() - datetime.timedelta(days=DEDUP_DAYS)).isoformat()
+
+    def is_recent(k: str) -> bool:
+        # key format: "{id}|{date}|{count}"
+        parts = k.split("|")
+        if len(parts) < 3:
+            return True
+        date_part = parts[-2]  # second-to-last part is the date
+        return "-W" in date_part or date_part >= cutoff
+
+    pruned = {k for k in keys if is_recent(k)}
+    if len(pruned) > MAX_STATE_SIZE:
+        pruned = set(list(pruned)[-MAX_STATE_SIZE:])
+    STATE_FILE.write_text(json.dumps(list(pruned)))
 
 
 def get_full_history(ytmusic: YTMusic, limit: int = 500) -> list:
@@ -123,10 +176,30 @@ def sync() -> None:
 
     history = get_full_history(ytmusic)
     print(f"  📋 API returned {len(history)} track(s) total")
-    new_tracks = [
-        t for t in history
-        if t.get("videoId") and t["videoId"] not in scrobbled
-    ]
+
+    # Count total occurrences of each base key (history is newest-first).
+    # Assign nth-play count oldest-first so new plays always get the highest
+    # count and are the only ones absent from state.
+    base_totals: dict[str, int] = {}
+    for t in history:
+        b = _track_base_key(t)
+        if b:
+            base_totals[b] = base_totals.get(b, 0) + 1
+
+    base_seen: dict[str, int] = {}
+    new_tracks: list[tuple[str, dict]] = []
+    for t in history:
+        b = _track_base_key(t)
+        if b is None:
+            artist = t["artists"][0]["name"] if t.get("artists") else "?"
+            print(f"  ⚠️  No ID: {artist} — {t.get('title', '?')}")
+            continue
+        n = base_seen.get(b, 0)
+        base_seen[b] = n + 1
+        # newest appearance → highest count; oldest appearance → 0
+        key = f"{b}|{base_totals[b] - 1 - n}"
+        if key not in scrobbled:
+            new_tracks.append((key, t))
 
     if not new_tracks:
         print("  ✅ No new tracks to scrobble.\n")
@@ -141,7 +214,7 @@ def sync() -> None:
     oldest_ts = now - (count - 1) * 30
     rows: list[str] = []
 
-    for i, track in enumerate(reversed(new_tracks)):
+    for i, (key, track) in enumerate(reversed(new_tracks)):
         artist = track["artists"][0]["name"] if track.get("artists") else "Unknown"
         title = track["title"]
         album = track.get("album", {}).get("name") if track.get("album") else None
@@ -151,7 +224,7 @@ def sync() -> None:
         time_label = datetime.datetime.fromtimestamp(timestamp).strftime("%H:%M")
         print(f"  🎧 {label[:WIDTH - 10]}  {time_label}")
         network.scrobble(artist=artist, title=title, timestamp=timestamp, album=album, duration=duration)
-        scrobbled.add(track["videoId"])
+        scrobbled.add(key)
         rows.append(f"| {i + 1} | {artist} | {title} | {album or '—'} | {time_label} |")
 
     save_state(scrobbled)
