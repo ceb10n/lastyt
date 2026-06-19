@@ -3,7 +3,6 @@ import re
 
 # Paste the full cURL command between the triple quotes below
 curl = """
-
 """
 
 headers = {}

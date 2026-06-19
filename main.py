@@ -89,11 +89,20 @@ def get_full_history(ytmusic: YTMusic, limit: int = 500) -> list:
     response = ytmusic._send_request(endpoint, body)
     section_list = nav(response, [*SINGLE_COLUMN_TAB, "sectionListRenderer"])
     sections = section_list.get("contents", [])
+    if not sections:
+        available_keys = list(section_list.keys())
+        raise RuntimeError(
+            f"YTMusic history returned no sections (sectionListRenderer keys: {available_keys}). "
+            "Check that your YTM credentials (YTM_HEADERS or browser.json) are still valid."
+        )
     songs: list = []
 
     def parse_section(content: dict) -> list:
         data = nav(content, [*MUSIC_SHELF, "contents"], True)
         if not data:
+            error = nav(content, ["musicNotifierShelfRenderer", "title", "runs", 0, "text"], True)
+            if error:
+                raise RuntimeError(f"YTMusic history error: {error}")
             return []
         played_label = nav(content["musicShelfRenderer"], TITLE_TEXT)
         items = parse_playlist_items(data)
