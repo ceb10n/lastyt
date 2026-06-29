@@ -22,7 +22,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Install dependencies
-        run: pip install ytmusicapi pylast
+        run: pip install ytmusicapi pylast httpx
 
       - name: Run sync
         env:
@@ -31,6 +31,7 @@ jobs:
           LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
           LASTFM_USERNAME: ${{ secrets.LASTFM_USERNAME }}
           LASTFM_PASSWORD: ${{ secrets.LASTFM_PASSWORD }}
+          LOUDGY_TOKEN: ${{ secrets.LOUDGY_TOKEN }}
         run: python main.py
 
       - name: Save state
