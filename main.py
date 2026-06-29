@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+import httpx
 import pylast
 from ytmusicapi import YTMusic
 from ytmusicapi.continuations import get_continuations
@@ -159,6 +160,31 @@ def build_lastfm() -> pylast.LastFMNetwork:
     )
 
 
+def scrobble_loudgy(
+    token: str,
+    artist: str,
+    title: str,
+    timestamp: int,
+    album: str | None = None,
+    album_artist: str | None = None,
+    duration: int | None = None,
+) -> None:
+    data: dict[str, str] = {
+        "method": "track.scrobble",
+        "sk": token,
+        "artist[0]": artist,
+        "track[0]": title,
+        "timestamp[0]": str(timestamp),
+    }
+    if album:
+        data["album[0]"] = album
+    if album_artist:
+        data["albumArtist[0]"] = album_artist
+    if duration is not None:
+        data["duration[0]"] = str(duration)
+    httpx.post("https://loudgy.com/2.0/", data=data, timeout=15)
+
+
 def fmt_ts(timestamp: int) -> str:
     return datetime.datetime.fromtimestamp(timestamp).strftime("%d %b %Y %H:%M")
 
@@ -173,8 +199,11 @@ def write_summary(lines: list[str]) -> None:
 def sync() -> None:
     started_at = time.time()
 
+    loudgy_token = os.environ.get("LOUDGY_TOKEN")
+    destinations = "Last.fm" + (" + Loudgy" if loudgy_token else "")
+
     print("─" * WIDTH)
-    print(f"  🎵 lastyt  |  YouTube Music → Last.fm")
+    print(f"  🎵 lastyt  |  YouTube Music → {destinations}")
     print(f"  📅 {datetime.datetime.now().strftime('%d %b %Y %H:%M')}")
     print("─" * WIDTH)
 
@@ -240,6 +269,8 @@ def sync() -> None:
         time_label = datetime.datetime.fromtimestamp(timestamp).strftime("%H:%M")
         print(f"  🎧 {label[:WIDTH - 10]}  {time_label}")
         network.scrobble(artist=artist, title=title, timestamp=timestamp, album=album, duration=duration)
+        if loudgy_token:
+            scrobble_loudgy(loudgy_token, artist, title, timestamp, album=album, album_artist=artist, duration=duration)
         scrobbled.add(key)
         rows.append(f"| {i + 1} | {artist} | {title} | {album or '—'} | {time_label} |")
 
